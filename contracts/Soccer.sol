@@ -1,10 +1,59 @@
-// SPDX-License-Identifier: SEE LICENSE IN LICENSE
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract BetSoccer {
+contract Context {
+    function _msgSender() internal view virtual returns (address) {
+        return msg.sender;
+    }
+
+    function _msgData() internal view virtual returns (bytes memory) {
+        this;
+        return msg.data;
+    }
+}
+
+contract Ownerable is Context {
+    address private _owner;
+
+    constructor() {
+        address msgSender = _msgSender();
+        _owner = msgSender;
+        emit OwnershipTransferred(address(0), msgSender);
+    }
+
+    event OwnershipTransferred(
+        address indexed previousOwner,
+        address indexed owner
+    );
+
+    function owner() public view returns (address) {
+        return _owner;
+    }
+
+    modifier onlyOwner() {
+        require(_owner == _msgSender(), "ownable:caller is not the owner");
+        _;
+    }
+
+    function renounceOwnership() public virtual onlyOwner {
+        emit OwnershipTransferred(_owner, address(0));
+        _owner = address(0);
+    }
+
+    function transferOwnership(address newOwner) public virtual onlyOwner {
+        require(
+            newOwner != address(0),
+            "ownable:new owner is the zero address"
+        );
+        emit OwnershipTransferred(_owner, newOwner);
+        _owner = newOwner;
+    }
+}
+
+contract BetSoccer is Ownerable {
     using SafeMath for uint256;
 
     struct Player {
@@ -15,7 +64,7 @@ contract BetSoccer {
     struct Game {
         string teamA;
         string teamB;
-        uint16 point;
+        int256 point;
     }
 
     address payable cto; //the sponsor of game
@@ -31,11 +80,6 @@ contract BetSoccer {
     bool public airdrop_statue;
     address payable public airdrop_address;
     uint public airdrop_amount;
-
-    modifier onlyCto() {
-        require(msg.sender == cto, "CTO only");
-        _;
-    }
 
     modifier gameStatue() {
         require(game_statue == true, "Game dose not start");
@@ -59,14 +103,13 @@ contract BetSoccer {
         _;
     }
 
-    constructor(address payable _cto) {
-        cto = _cto;
+    constructor() {
         game_statue = false;
         can_reset = true;
         airdrop_statue = false;
     }
 
-    function _airdrop() private returns (bool) {
+    function _airdrop() private view returns (bool) {
         //from fomo3D
         uint256 seed = uint256(
             keccak256(
@@ -78,12 +121,12 @@ contract BetSoccer {
                                 uint256(
                                     keccak256(abi.encodePacked(block.coinbase))
                                 )
-                            ) / (now)
+                            ) / (block.timestamp)
                         )
                         .add(block.gaslimit)
                         .add(
                             (uint256(keccak256(abi.encodePacked(msg.sender)))) /
-                                (now)
+                                (block.timestamp)
                         )
                         .add(block.number)
                 )
@@ -99,8 +142,8 @@ contract BetSoccer {
     function setGame(
         string memory _teamA,
         string memory _teamB,
-        uint16 _point
-    ) public onlyCto canReset {
+        int256 _point
+    ) public onlyOwner canReset {
         game.teamA = _teamA;
         game.teamB = _teamB;
         game.point = _point;
@@ -111,7 +154,7 @@ contract BetSoccer {
     }
 
     function bet(uint _chooseA) public payable gameStatue isHuman {
-        Player memory player = Player(msg.sender, msg.value);
+        Player memory player = Player(payable(msg.sender), msg.value);
         if (_chooseA == 1) {
             teamsA.push(player);
             amountA += msg.value;
@@ -121,12 +164,12 @@ contract BetSoccer {
         }
         if (airdrop_statue == false && _airdrop()) {
             airdrop_statue = true;
-            airdrop_address = msg.sender;
+            airdrop_address = payable(msg.sender);
         }
     }
 
-    function openGame(int _scoreA, int _scoreB) public payable onlyCto {
-        Player memory player;
+    function openGame(int _scoreA, int _scoreB) public payable onlyOwner {
+        Player storage player;
         uint i;
         airdrop_amount = 0;
         int256 a = (_scoreA * 100) - game.point;
@@ -140,7 +183,7 @@ contract BetSoccer {
             }
             for (i = 0; i < teamsA.length; i++) {
                 player = teamsA[i];
-                player.addr.transfer(
+                payable(player.addr).transfer(
                     player.money + (amountB * player.money * 90) / 100 / amountA
                 );
             }
@@ -153,7 +196,7 @@ contract BetSoccer {
             }
             for (i = 0; i < teamsB.length; i++) {
                 player = teamsB[i];
-                player.addr.transfer(
+                payable((player.addr)).transfer(
                     player.money + (amountA * player.money * 90) / 100 / amountB
                 );
             }
@@ -168,6 +211,7 @@ contract BetSoccer {
 
     function getAirdropStatue()
         public
+        view
         returns (
             uint,
             uint,
@@ -178,16 +222,17 @@ contract BetSoccer {
         else return (0, 0, msg.sender);
     }
 
-    function getAmount() public onlyCto returns (uint, uint) {
+    function getAmount() public view onlyOwner returns (uint, uint) {
         return (amountA, amountB);
     }
 
     function getGameInfo()
         public
+        view
         returns (
             string memory,
             string memory,
-            uint
+            int256
         )
     {
         return (game.teamA, game.teamB, game.point);
